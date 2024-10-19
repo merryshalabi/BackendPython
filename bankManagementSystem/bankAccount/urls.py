@@ -4,10 +4,18 @@ from . import views
 
 # Create a router and register our viewsets with it
 router = DefaultRouter()
-router.register('bankaccount', views.BankAccountViewSet)
+router.register('', views.BankAccountViewSet)
 app_name = 'bankaccount'
 
 # The API URLs are now determined automatically by the router
 urlpatterns = [
     path('', include(router.urls)),
 ]
+
+
+
+
+
+
+
+

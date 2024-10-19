@@ -1,6 +1,8 @@
 from django.test import TestCase
 from django.contrib.auth import get_user_model
 from core import models
+from decimal import Decimal
+from datetime import date, timedelta
 
 # Create your tests here.
 
@@ -73,4 +75,83 @@ class ModelTests(TestCase):
         self.assertEqual(account.status, 'active')
         self.assertTrue(account.created_at)
 
+    def test_create_loan_successful(self):
+        """Test creating a loan with default values"""
+        user = get_user_model().objects.create_user(
+            email='loanuser@example.com',
+            password='password123'
+        )
+        account = models.BankAccount.objects.create(
+            user=user,
+            account_number='9876543210',
+            balance=5000.00
+        )
+
+        loan_amount = Decimal('1000.00')
+        interest_rate = Decimal('5.0')  # 5% interest rate
+        due_date = date.today() + timedelta(days=365)  # 1 year loan period
+
+        loan = models.Loan.objects.create(
+            account=account,
+            loan_amount=loan_amount,
+            interest_rate=interest_rate,
+            due_date=due_date
+        )
+
+        self.assertEqual(loan.account, account)
+        self.assertEqual(loan.loan_amount, loan_amount)
+        self.assertEqual(loan.interest_rate, interest_rate)
+        self.assertEqual(loan.status, 'active')
+        self.assertEqual(loan.due_date, due_date)
+        self.assertTrue(loan.created_at)
+
+    def test_defaulted_loan_status(self):
+        """Test changing a loan status to defaulted"""
+        user = get_user_model().objects.create_user(
+            email='defaulteduser@example.com',
+            password='password123'
+        )
+        account = models.BankAccount.objects.create(
+            user=user,
+            account_number='1122334455',
+            balance=3000.00
+        )
+
+        loan = models.Loan.objects.create(
+            account=account,
+            loan_amount=Decimal('1500.00'),
+            interest_rate=Decimal('4.5'),
+            due_date=date.today() + timedelta(days=365)
+        )
+
+        # Change the loan status to defaulted
+        loan.status = 'defaulted'
+        loan.save()
+
+        self.assertEqual(loan.status, 'defaulted')
+
+    def test_paid_loan_status(self):
+        """Test changing a loan status to paid"""
+        user = get_user_model().objects.create_user(
+            email='paiduser@example.com',
+            password='password123'
+        )
+        account = models.BankAccount.objects.create(
+            user=user,
+            account_number='9988776655',
+            balance=4000.00
+        )
+
+        loan = models.Loan.objects.create(
+            account=account,
+            loan_amount=Decimal('2000.00'),
+            interest_rate=Decimal('3.0'),
+            due_date=date.today() + timedelta(days=365)
+        )
+
+        # Change the loan status to paid
+        loan.status = 'paid'
+        loan.save()
+
+        self.assertEqual(loan.status, 'paid')
 
