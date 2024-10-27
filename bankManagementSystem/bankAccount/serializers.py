@@ -12,7 +12,6 @@ class BankAccountSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         """Create a new bank account."""
-        # mish mt2kdi mn had elstr
         validated_data['user'] = self.context['request'].user
         return BankAccount.objects.create(**validated_data)
 

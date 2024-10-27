@@ -5,8 +5,8 @@ from rest_framework.authentication import TokenAuthentication
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.decorators import action
-from core.models import BankAccount, Loan
-from .serializers import DepositSerializer, WithdrawalSerializer, BalanceSerializer, TransferSerializer, LoanSerializer
+from core.models import BankAccount, Loan, Transaction ,Bank
+from .serializers import DepositSerializer, WithdrawalSerializer, BalanceSerializer, TransferSerializer, LoanSerializer,TransactionSerializer
 
 
 class BankAccountViewSet(viewsets.GenericViewSet):
@@ -44,17 +44,27 @@ class BankAccountViewSet(viewsets.GenericViewSet):
         """Handle deposit to a bank account"""
         serializer = self.get_serializer(data=request.data, context={'request': request})
         if serializer.is_valid():
-            serializer.save()
-            return Response({"message": "Deposit successful"}, status=status.HTTP_200_OK)
+            transaction = serializer.save()
+            return Response({
+                "message": "Deposit successful",
+                "transaction_id": transaction.id,
+                "amount": transaction.amount,
+                "fee": transaction.fee
+            }, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     @action(methods=['POST'], detail=False, url_path='withdraw')
     def withdraw(self, request):
         """Handle withdrawal from a bank account"""
-        serializer = self.get_serializer(data=request.data)
+        serializer = self.get_serializer(data=request.data, context={'request': request})
         if serializer.is_valid():
-            serializer.save()
-            return Response({"message": "Withdrawal successful"}, status=status.HTTP_200_OK)
+            transaction = serializer.save()
+            return Response({
+                "message": "Withdrawal successful",
+                "transaction_id": transaction.id,
+                "amount": transaction.amount,
+                "fee": transaction.fee
+            }, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     @extend_schema(
@@ -93,16 +103,54 @@ class BankAccountViewSet(viewsets.GenericViewSet):
 
     @action(methods=['POST'], detail=False, url_path='transfer')
     def transfer(self, request):
-        """Transfer funds between accounts"""
-        serializer = self.get_serializer(data=request.data)
+        """Transfer funds between accounts using account IDs."""
+        serializer = TransferSerializer(data=request.data, context={'request': request})
         if serializer.is_valid():
-            transfer_data = serializer.save()
+            transaction = serializer.save()  # `transaction` is a `Transaction` instance
             return Response({
                 "message": "Transfer successful",
-                "source_account": transfer_data['source_account'],
-                "target_account": transfer_data['target_account']
+                "transaction_id": transaction.id,
+                "source_account_id": transaction.account.id,  # Use ID instead of account number
+                "target_account_id": transaction.target_account.id,  # Use ID instead of account number
+                "amount": str(transaction.amount),
+                "fee": str(transaction.fee),
+                "currency": transaction.currency
             }, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='account_id',
+                description='ID of the bank account to filter transactions',
+                required=False,
+                type=OpenApiTypes.INT
+            )
+        ],
+        responses={200: TransactionSerializer(many=True)},
+    )
+    @action(methods=['GET'], detail=False, url_path='transactions')
+    def get_all_transactions(self, request):
+        """Retrieve all transactions for the authenticated customer, optionally filtered by account."""
+        user = request.user
+        account_id = request.query_params.get('account_id')
+
+        # Filter transactions by the user and optionally by account_id if provided
+        if account_id:
+            transactions = Transaction.objects.filter(account__user=user, account__id=account_id).order_by(
+                '-created_at')
+        else:
+            transactions = Transaction.objects.filter(account__user=user).order_by('-created_at')
+
+        # Support pagination if enabled
+        page = self.paginate_queryset(transactions)
+        if page is not None:
+            serializer = TransactionSerializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+
+        # Return the full list of transactions if pagination is not applied
+        serializer = TransactionSerializer(transactions, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 class LoanViewSet(viewsets.GenericViewSet):
@@ -119,10 +167,31 @@ class LoanViewSet(viewsets.GenericViewSet):
     @action(methods=['POST'], detail=False, url_path='grant')
     def grant_loan(self, request):
         """Grant a loan to a bank account"""
-        serializer = self.get_serializer(data=request.data)
+        serializer = self.get_serializer(data=request.data, context={'request': request})
         if serializer.is_valid():
-            serializer.save()
-            return Response({"message": "Loan granted successfully."}, status=status.HTTP_201_CREATED)
+            loan = serializer.save()
+
+            # Set interest rate and fee based on the bank's current values
+            bank = Bank.objects.first()
+            if not bank:
+                return Response({"detail": "Bank instance not found."},
+                                status=status.HTTP_400_BAD_REQUEST)
+            loan.interest_rate = bank.interest_rate
+            loan.save()
+
+            # Add loan amount to the user's account balance
+            loan.account.balance += loan.loan_amount
+            loan.account.save()
+
+            return Response({
+                "id": loan.id,
+                "account": loan.account.id,
+                "loan_amount": str(loan.loan_amount),
+                "interest_rate": str(loan.interest_rate),
+                "status": loan.status,
+                "created_at": loan.created_at.isoformat(),
+                "due_date": loan.due_date.isoformat()
+            }, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     @extend_schema(
@@ -164,20 +233,44 @@ class LoanViewSet(viewsets.GenericViewSet):
             return Response({"detail": "Repayment amount must be greater than zero."},
                             status=status.HTTP_400_BAD_REQUEST)
 
-        if repayment_amount > loan.loan_amount:
-            return Response({"detail": "Repayment amount exceeds loan balance."},
+        # Calculate interest on the repayment amount
+        interest = repayment_amount * (loan.interest_rate / 100)
+        total_repayment = repayment_amount + interest
+
+        # Ensure the account has enough funds for the repayment
+        if loan.account.balance < total_repayment:
+            return Response({"detail": "Insufficient funds in the account for repayment."},
                             status=status.HTTP_400_BAD_REQUEST)
 
+        # Deduct from the borrower's account balance
+        loan.account.balance -= total_repayment
+        loan.account.save()
+
+        # Deduct repayment from the loan amount
         loan.loan_amount -= repayment_amount
-        if loan.loan_amount == 0:
+        if loan.loan_amount <= 0:
             loan.status = 'paid'
         loan.save()
 
-        return Response({"message": "Loan repayment successful."}, status=status.HTTP_200_OK)
+        # Add the total repayment to the bank’s balance
+        bank = Bank.objects.first()
+        if not bank:
+            return Response({"detail": "Bank instance not found."},
+                            status=status.HTTP_400_BAD_REQUEST)
 
+        bank.balance += total_repayment
+        bank.save()
+
+        return Response({
+            "message": "Loan repayment successful.",
+            "repayment_amount": repayment_amount,
+            "interest": interest,
+            "total_deducted": total_repayment
+        }, status=status.HTTP_200_OK)
     @action(methods=['GET'], detail=False, url_path='customer-loans')
     def get_customer_loans(self, request):
         """Retrieve all loans for the authenticated customer"""
         customer_loans = self.queryset.filter(account__user=request.user)
         serializer = self.get_serializer(customer_loans, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
+

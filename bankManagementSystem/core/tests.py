@@ -3,6 +3,8 @@ from django.contrib.auth import get_user_model
 from core import models
 from decimal import Decimal
 from datetime import date, timedelta
+from core.models import ForeignCurrency
+
 
 # Create your tests here.
 
@@ -154,4 +156,149 @@ class ModelTests(TestCase):
         loan.save()
 
         self.assertEqual(loan.status, 'paid')
+
+    def test_create_transaction_deposit(self):
+        """Test creating a deposit transaction"""
+        user = get_user_model().objects.create_user(
+            email='deposituser@example.com',
+            password='password123'
+        )
+        account = models.BankAccount.objects.create(
+            user=user,
+            account_number='111122223333',
+            balance=1000.00
+        )
+
+        transaction = models.Transaction.objects.create(
+            account=account,
+            transaction_type='deposit',
+            amount=Decimal('500.00'),
+            fee=Decimal('0.0'),  # No fee for this deposit
+            description='Deposit to savings account'
+        )
+
+        self.assertEqual(transaction.account, account)
+        self.assertEqual(transaction.transaction_type, 'deposit')
+        self.assertEqual(transaction.amount, Decimal('500.00'))
+        self.assertEqual(transaction.fee, Decimal('0.0'))
+        self.assertEqual(transaction.description, 'Deposit to savings account')
+        self.assertTrue(transaction.created_at)
+
+    def test_create_transaction_withdrawal(self):
+        """Test creating a withdrawal transaction"""
+        user = get_user_model().objects.create_user(
+            email='withdrawaluser@example.com',
+            password='password123'
+        )
+        account = models.BankAccount.objects.create(
+            user=user,
+            account_number='444455556666',
+            balance=2000.00
+        )
+
+        transaction = models.Transaction.objects.create(
+            account=account,
+            transaction_type='withdrawal',
+            amount=Decimal('300.00'),
+            fee=Decimal('5.00'),  # Adding a fee for the withdrawal
+            description='Withdrawal from checking account'
+        )
+
+        self.assertEqual(transaction.account, account)
+        self.assertEqual(transaction.transaction_type, 'withdrawal')
+        self.assertEqual(transaction.amount, Decimal('300.00'))
+        self.assertEqual(transaction.fee, Decimal('5.00'))
+        self.assertEqual(transaction.description, 'Withdrawal from checking account')
+        self.assertTrue(transaction.created_at)
+
+    def test_create_transaction_transfer(self):
+        """Test creating a transfer transaction"""
+        user = get_user_model().objects.create_user(
+            email='transferuser@example.com',
+            password='password123'
+        )
+        source_account = models.BankAccount.objects.create(
+            user=user,
+            account_number='777788889999',
+            balance=5000.00
+        )
+        target_account = models.BankAccount.objects.create(
+            user=user,
+            account_number='000011112222',
+            balance=1000.00
+        )
+
+        transaction_out = models.Transaction.objects.create(
+            account=source_account,
+            transaction_type='transfer_out',
+            amount=Decimal('500.00'),
+            fee=Decimal('5.00'),  # Adding a fee for the transfer
+            description='Transfer to another account',
+            target_account=target_account
+        )
+
+        transaction_in = models.Transaction.objects.create(
+            account=target_account,
+            transaction_type='transfer_in',
+            amount=Decimal('500.00'),
+            fee=Decimal('0.0'),  # No fee for the incoming transfer
+            description='Transfer from another account',
+            source_account=source_account
+        )
+
+        # Test the outgoing transaction
+        self.assertEqual(transaction_out.account, source_account)
+        self.assertEqual(transaction_out.transaction_type, 'transfer_out')
+        self.assertEqual(transaction_out.amount, Decimal('500.00'))
+        self.assertEqual(transaction_out.fee, Decimal('5.00'))
+        self.assertEqual(transaction_out.target_account, target_account)
+        self.assertTrue(transaction_out.created_at)
+
+        # Test the incoming transaction
+        self.assertEqual(transaction_in.account, target_account)
+        self.assertEqual(transaction_in.transaction_type, 'transfer_in')
+        self.assertEqual(transaction_in.amount, Decimal('500.00'))
+        self.assertEqual(transaction_in.fee, Decimal('0.0'))
+        self.assertEqual(transaction_in.source_account, source_account)
+        self.assertTrue(transaction_in.created_at)
+
+    def test_transaction_fee(self):
+        """Test that a transaction fee is correctly recorded"""
+        user = get_user_model().objects.create_user(
+            email='feeuser@example.com',
+            password='password123'
+        )
+        account = models.BankAccount.objects.create(
+            user=user,
+            account_number='555566667777',
+            balance=3000.00
+        )
+
+        transaction = models.Transaction.objects.create(
+            account=account,
+            transaction_type='deposit',
+            amount=Decimal('1000.00'),
+            fee=Decimal('10.00'),
+            description='Deposit with a fee'
+        )
+
+        self.assertEqual(transaction.fee, Decimal('10.00'))
+        self.assertEqual(transaction.amount, Decimal('1000.00'))
+        self.assertEqual(transaction.description, 'Deposit with a fee')
+        self.assertTrue(transaction.created_at)
+
+    def test_foreign_currency_creation(self):
+        # Create a ForeignCurrency object
+        currency = ForeignCurrency.objects.create(
+            currency_code='USD',
+            exchange_rate=Decimal('3.67')
+        )
+
+        # Retrieve the currency object from the database
+        retrieved_currency = ForeignCurrency.objects.get(currency_code='USD')
+
+        # Assertions to verify the object was created correctly
+        self.assertEqual(retrieved_currency.currency_code, 'USD')
+        self.assertEqual(retrieved_currency.exchange_rate, Decimal('3.67'))
+        self.assertIsNotNone(retrieved_currency.updated_at)  # Ensure the timestamp is set
 

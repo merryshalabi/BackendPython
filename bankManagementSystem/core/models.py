@@ -1,6 +1,7 @@
 from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from bankManagementSystem import settings
+from decimal import Decimal
 
 # Create your models here.
 """
@@ -60,8 +61,6 @@ class BankAccount(models.Model):
         return f"Account {self.account_number} - {self.user.email}"
 
 class Transaction(models.Model):
-    """Transaction model for recording bank account operations"""
-
     TRANSACTION_TYPES = [
         ('deposit', 'Deposit'),
         ('withdrawal', 'Withdrawal'),
@@ -76,8 +75,24 @@ class Transaction(models.Model):
     )
     transaction_type = models.CharField(max_length=20, choices=TRANSACTION_TYPES)
     amount = models.DecimalField(max_digits=12, decimal_places=2)
+    fee = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.0'))
+    currency = models.CharField(max_length=10, default='NIS')
     created_at = models.DateTimeField(auto_now_add=True)
     description = models.TextField(blank=True, null=True)
+    source_account = models.ForeignKey(
+        BankAccount,
+        on_delete=models.SET_NULL,
+        related_name='source_transactions',
+        blank=True,
+        null=True
+    )
+    target_account = models.ForeignKey(
+        BankAccount,
+        on_delete=models.SET_NULL,
+        related_name='target_transactions',
+        blank=True,
+        null=True
+    )
 
     def __str__(self):
         return f"{self.transaction_type} - {self.amount} on {self.created_at} for {self.account}"
@@ -99,4 +114,20 @@ class Loan(models.Model):
 
     def __str__(self):
         return f"Loan of {self.loan_amount} for account {self.account.account_number}"
+
+
+class ForeignCurrency(models.Model):
+    currency_code = models.CharField(max_length=3, unique=True)
+    exchange_rate = models.DecimalField(max_digits=10, decimal_places=4)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.currency_code} - Rate: {self.exchange_rate}"
+
+class Bank(models.Model):
+    balance = models.DecimalField(max_digits=15, decimal_places=2, default=10000000.00)
+    transaction_fee_percentage = models.DecimalField(max_digits=5, decimal_places=2, default=1.0)  # Default transaction fee percentage
+    interest_rate = models.DecimalField(max_digits=5, decimal_places=2, default=5.0)  # Default interest rate for loans
+    def __str__(self):
+        return f"Bank Balance: {self.balance} NIS"
 

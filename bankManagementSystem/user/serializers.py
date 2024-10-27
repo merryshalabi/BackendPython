@@ -7,13 +7,16 @@ from django.contrib.auth import get_user_model, authenticate
 
 from rest_framework import serializers
 
+from bankAccount.serializers import BankAccountSerializer
 
 class UserSerializer(serializers.ModelSerializer):
     """Serializer for the user model"""
 
+    accounts = BankAccountSerializer(many=True, read_only=True)
+
     class Meta:
         model = get_user_model()
-        fields = ('email', 'password', 'name')
+        fields = ('email', 'password', 'name', 'accounts')
         extra_kwargs = {
             'password': {
                 'write_only': True,
